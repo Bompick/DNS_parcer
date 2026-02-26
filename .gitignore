@@ -1,0 +1,23 @@
+# Excel files
+*.xlsx
+*.xls
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.packages/
+
+# Environment
+.env
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+debug_page.html
+debug_screenshot.png

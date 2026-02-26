@@ -1,0 +1,6 @@
+selenium
+undetected-chromedriver
+openpyxl
+requests
+beautifulsoup4
+setuptools
