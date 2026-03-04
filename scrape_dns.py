@@ -2,6 +2,7 @@ import sys
 import os
 import time
 import datetime
+import glob
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 # Add local packages to path
@@ -243,34 +244,116 @@ def scrape_dns():
         
     save_to_excel(products_data, brand)
 
+def get_previous_prices(brand):
+    """
+    Finds the latest Excel file for the given brand and returns a dictionary of prices and the filename.
+    Returns: ({model_name: price}, filename)
+    """
+    # Find all files matching the brand pattern
+    pattern = f"DNS_TV_{brand.upper()}_*.xlsx"
+    files = glob.glob(pattern)
+    
+    if not files:
+        return {}, None
+    
+    # Sort by modification time (newest first)
+    files.sort(key=os.path.getmtime, reverse=True)
+    
+    # Skip the file we are currently creating if it exists (though it shouldn't yet)
+    # Actually, we want the *previous* file.
+    # If we run this script multiple times a day, we might pick up today's earlier run.
+    # The prompt says "previous working day", but simplified logic is "latest available file".
+    
+    latest_file = files[0]
+    print(f"Comparing with previous file: {latest_file}")
+    
+    previous_prices = {}
+    try:
+        wb = openpyxl.load_workbook(latest_file)
+        ws = wb.active
+        
+        # Assuming header is row 1, data starts row 2
+        # Column 1: Name, Column 2: Price
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0] and row[1] is not None:
+                name = str(row[0]).strip()
+                try:
+                    price = int(row[1])
+                except:
+                    price = 0
+                previous_prices[name] = price
+                
+        wb.close()
+    except Exception as e:
+        print(f"Error reading previous file: {e}")
+        
+    return previous_prices, latest_file
+
 def save_to_excel(data, brand):
     filename = get_timestamp_filename(brand)
+    
+    # Get previous prices before creating new file
+    previous_prices, previous_file = get_previous_prices(brand)
+    
+    prev_price_header = "Цена пред."
+    if previous_file:
+        # Extract date from filename: DNS_TV_BRAND_dd_mm_yyyy_HH_MM.xlsx
+        try:
+            # Remove extension
+            name_without_ext = os.path.splitext(previous_file)[0]
+            # Split by underscores
+            parts = name_without_ext.split('_')
+            # The date parts are the last 5: dd, mm, yyyy, HH, MM
+            if len(parts) >= 5:
+                date_str = f"{parts[-5]}.{parts[-4]}.{parts[-3]}"
+                prev_price_header = f"Цена {date_str}"
+        except:
+            pass
+    
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = f"{brand.upper()} TVs"
     
     # Headers
-    ws.append(["Название модели", "Цена"])
+    ws.append(["Название модели", "Цена текущая", prev_price_header, "Изменение"])
     
     # Orange fill for unavailable
     orange_fill = PatternFill(start_color="FFA500", end_color="FFA500", fill_type="solid")
     
+    # Green/Red fill for price changes
+    green_fill = PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid") # Price dropped (good)
+    red_fill = PatternFill(start_color="FFCCCB", end_color="FFCCCB", fill_type="solid")   # Price rose (bad)
+    
     for item in data:
-        row = [item["name"], item["price"]]
+        name = item["name"]
+        current_price = item["price"]
+        prev_price = previous_prices.get(name, 0)
+        
+        diff = 0
+        if prev_price > 0 and current_price > 0:
+            diff = current_price - prev_price
+            
+        row = [name, current_price, prev_price if prev_price > 0 else "-", diff if prev_price > 0 else "-"]
         ws.append(row)
         
-        if not item["available"] or item["price"] == 0:
-            # Apply fill to the price cell (column 2)
+        # Apply orange fill if unavailable
+        if not item["available"] or current_price == 0:
             cell = ws.cell(row=ws.max_row, column=2)
             cell.fill = orange_fill
             
-            # Also apply to name if needed, but prompt said "mark price"
-            # cell_name = ws.cell(row=ws.max_row, column=1)
-            # cell_name.fill = orange_fill
+        # Apply color for price change
+        if isinstance(diff, int) and diff != 0:
+            cell_diff = ws.cell(row=ws.max_row, column=4)
+            if diff > 0:
+                cell_diff.fill = red_fill # Price increased
+            else:
+                cell_diff.fill = green_fill # Price decreased
 
     # Adjust column widths
     ws.column_dimensions['A'].width = 50
     ws.column_dimensions['B'].width = 15
+    ws.column_dimensions['C'].width = 15
+    ws.column_dimensions['D'].width = 15
     
     wb.save(filename)
     print(f"Saved {len(data)} items to {filename}")
