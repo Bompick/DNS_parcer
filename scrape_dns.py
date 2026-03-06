@@ -24,7 +24,10 @@ except ImportError as e:
 
 def get_timestamp_filename(brand):
     now = datetime.datetime.now()
-    return f"DNS_TV_{brand.upper()}_{now.strftime('%d_%m_%Y_%H_%M')}.xlsx"
+    # Create directory if it doesn't exist
+    if not os.path.exists("parsing_results"):
+        os.makedirs("parsing_results")
+    return os.path.join("parsing_results", f"DNS_TV_{brand.upper()}_{now.strftime('%d_%m_%Y_%H_%M')}.xlsx")
 
 def setup_driver():
     options = uc.ChromeOptions()
@@ -250,11 +253,17 @@ def get_previous_prices(brand):
     Returns: ({model_name: price}, filename)
     """
     # Find all files matching the brand pattern
-    pattern = f"DNS_TV_{brand.upper()}_*.xlsx"
+    pattern = os.path.join("parsing_results", f"DNS_TV_{brand.upper()}_*.xlsx")
     files = glob.glob(pattern)
     
     if not files:
-        return {}, None
+        # Check if files exist in the current directory (backward compatibility or just moved)
+        pattern_old = f"DNS_TV_{brand.upper()}_*.xlsx"
+        files_old = glob.glob(pattern_old)
+        if files_old:
+            files = files_old
+        else:
+            return {}, None
     
     # Sort by modification time (newest first)
     files.sort(key=os.path.getmtime, reverse=True)
@@ -273,12 +282,22 @@ def get_previous_prices(brand):
         ws = wb.active
         
         # Assuming header is row 1, data starts row 2
-        # Column 1: Name, Column 2: Price
+        # Column 1: Name
+        # If brand is LG, price is in Column 4, else Column 2
+        price_col_idx = 1 # 0-based index for list (Column 2)
+        
+        # Check headers to determine price column
+        headers = [cell.value for cell in ws[1]]
+        if "Lg short name" in headers:
+            price_col_idx = 3 # Column 4
+        elif "LG converter" in headers:
+            price_col_idx = 2 # Column 3
+            
         for row in ws.iter_rows(min_row=2, values_only=True):
-            if row[0] and row[1] is not None:
+            if row[0] and len(row) > price_col_idx and row[price_col_idx] is not None:
                 name = str(row[0]).strip()
                 try:
-                    price = int(row[1])
+                    price = int(row[price_col_idx])
                 except:
                     price = 0
                 previous_prices[name] = price
@@ -289,11 +308,53 @@ def get_previous_prices(brand):
         
     return previous_prices, latest_file
 
+def load_lg_models():
+    """
+    Loads LG_models.xlsx and returns a dictionary mapping model names to a dict with suffix and short name.
+    Returns: {model_code: {'suffix': name_with_suffix, 'short_name': lg_short_name}}
+    """
+    lg_mapping = {}
+    try:
+        if not os.path.exists("LG_models.xlsx"):
+            print("LG_models.xlsx not found.")
+            return lg_mapping
+            
+        wb = openpyxl.load_workbook("LG_models.xlsx", read_only=True)
+        ws = wb.active
+        
+        # Headers: model_LG (0), PSI name (1), Name with suffix (2), LG name (3)
+        # Skip header row
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0]:
+                model = str(row[0]).strip()
+                suffix = str(row[2]).strip() if len(row) > 2 and row[2] else ""
+                short_name = str(row[3]).strip() if len(row) > 3 and row[3] else ""
+                
+                lg_mapping[model] = {
+                    'suffix': suffix,
+                    'short_name': short_name
+                }
+                
+        wb.close()
+        print(f"Loaded {len(lg_mapping)} LG models from LG_models.xlsx")
+    except Exception as e:
+        print(f"Error loading LG_models.xlsx: {e}")
+        
+    return lg_mapping
+
 def save_to_excel(data, brand):
     filename = get_timestamp_filename(brand)
     
     # Get previous prices before creating new file
     previous_prices, previous_file = get_previous_prices(brand)
+    
+    # Load LG models if applicable
+    lg_mapping = {}
+    lg_keys = []
+    if brand.lower() == 'lg':
+        lg_mapping = load_lg_models()
+        # Sort keys by length descending to match longest substring first
+        lg_keys = sorted(lg_mapping.keys(), key=len, reverse=True)
     
     prev_price_header = "Цена пред."
     if previous_file:
@@ -315,7 +376,13 @@ def save_to_excel(data, brand):
     ws.title = f"{brand.upper()} TVs"
     
     # Headers
-    ws.append(["Название модели", "Цена текущая", prev_price_header, "Изменение"])
+    headers = ["Название модели"]
+    if brand.lower() == 'lg':
+        headers.append("LG converter")
+        headers.append("Lg short name")
+    headers.extend(["Цена текущая", prev_price_header, "Изменение"])
+    
+    ws.append(headers)
     
     # Orange fill for unavailable
     orange_fill = PatternFill(start_color="FFA500", end_color="FFA500", fill_type="solid")
@@ -329,21 +396,45 @@ def save_to_excel(data, brand):
         current_price = item["price"]
         prev_price = previous_prices.get(name, 0)
         
+        lg_suffix = ""
+        lg_short_name = ""
+        if brand.lower() == 'lg' and lg_mapping:
+            # Try to find model in name
+            # Iterate through keys (sorted by length)
+            for key in lg_keys:
+                if key in name:
+                    lg_suffix = lg_mapping[key]['suffix']
+                    lg_short_name = lg_mapping[key]['short_name']
+                    break
+        
         diff = 0
         if prev_price > 0 and current_price > 0:
             diff = current_price - prev_price
             
-        row = [name, current_price, prev_price if prev_price > 0 else "-", diff if prev_price > 0 else "-"]
+        row = [name]
+        if brand.lower() == 'lg':
+            row.append(lg_suffix)
+            row.append(lg_short_name)
+            
+        row.extend([current_price, prev_price if prev_price > 0 else "-", diff if prev_price > 0 else "-"])
         ws.append(row)
         
         # Apply orange fill if unavailable
         if not item["available"] or current_price == 0:
-            cell = ws.cell(row=ws.max_row, column=2)
+            # Column index depends on if we added LG converter and Lg short name
+            # For LG: Name (A), Converter (B), Short (C), Price (D) -> column 4
+            # For others: Name (A), Price (B) -> column 2
+            col_idx = 4 if brand.lower() == 'lg' else 2
+            cell = ws.cell(row=ws.max_row, column=col_idx)
             cell.fill = orange_fill
             
         # Apply color for price change
         if isinstance(diff, int) and diff != 0:
-            cell_diff = ws.cell(row=ws.max_row, column=4)
+            # Column index for diff
+            # For LG: Name (A), Converter (B), Short (C), Price (D), Prev (E), Diff (F) -> column 6
+            # For others: Name (A), Price (B), Prev (C), Diff (D) -> column 4
+            col_diff = 6 if brand.lower() == 'lg' else 4
+            cell_diff = ws.cell(row=ws.max_row, column=col_diff)
             if diff > 0:
                 cell_diff.fill = red_fill # Price increased
             else:
@@ -351,9 +442,16 @@ def save_to_excel(data, brand):
 
     # Adjust column widths
     ws.column_dimensions['A'].width = 50
-    ws.column_dimensions['B'].width = 15
-    ws.column_dimensions['C'].width = 15
-    ws.column_dimensions['D'].width = 15
+    if brand.lower() == 'lg':
+        ws.column_dimensions['B'].width = 25
+        ws.column_dimensions['C'].width = 15
+        ws.column_dimensions['D'].width = 15
+        ws.column_dimensions['E'].width = 15
+        ws.column_dimensions['F'].width = 15
+    else:
+        ws.column_dimensions['B'].width = 15
+        ws.column_dimensions['C'].width = 15
+        ws.column_dimensions['D'].width = 15
     
     wb.save(filename)
     print(f"Saved {len(data)} items to {filename}")

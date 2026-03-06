@@ -1,5 +1,6 @@
 # Excel files
 *.xlsx
+!LG_models.xlsx
 *.xls
 
 # Python
@@ -21,3 +22,6 @@ env/
 *.log
 debug_page.html
 debug_screenshot.png
+
+# Results
+parsing_results/
