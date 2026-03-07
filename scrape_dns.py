@@ -66,6 +66,15 @@ def get_brand_selection():
         "6": "hisense"
     }
     
+    # Check for command line argument or environment variable
+    if len(sys.argv) > 1:
+        arg = sys.argv[1].lower()
+        if arg in brands.values():
+            return arg
+        # check if arg is a key
+        if arg in brands:
+            return brands[arg]
+
     print("\nКакой бренд промониторить?")
     print("1. LG")
     print("2. Samsung")
@@ -74,11 +83,43 @@ def get_brand_selection():
     print("5. Xiaomi")
     print("6. Hisense")
     
-    while True:
-        choice = input("\nВведите номер бренда (1-6): ").strip()
-        if choice in brands:
-            return brands[choice]
-        print("Неверный выбор. Пожалуйста, введите число от 1 до 6.")
+    print("\nУ вас есть 7 секунд для выбора, иначе будет выбран LG автоматически.")
+    
+    start_time = time.time()
+    
+    # Try using msvcrt for Windows
+    try:
+        import msvcrt
+        while True:
+            # Check if a key has been pressed
+            if msvcrt.kbhit():
+                # Get the key
+                key = msvcrt.getch()
+                try:
+                    choice = key.decode('utf-8').strip()
+                    print(choice) # Echo input
+                    
+                    if choice in brands:
+                        return brands[choice]
+                    else:
+                        print("\nНеверный выбор. Пожалуйста, введите число от 1 до 6.")
+                except:
+                    pass
+            
+            # Check timeout
+            if time.time() - start_time > 7:
+                print("\nВремя вышло. Автоматический выбор: LG")
+                return "lg"
+                
+            time.sleep(0.1)
+    except ImportError:
+        # Fallback for non-Windows (or if msvcrt fails)
+        print("Автоматический выбор недоступен в этом окружении.")
+        while True:
+            choice = input("\nВведите номер бренда (1-6): ").strip()
+            if choice in brands:
+                return brands[choice]
+            print("Неверный выбор. Пожалуйста, введите число от 1 до 6.")
 
 def scrape_dns():
     brand = get_brand_selection()

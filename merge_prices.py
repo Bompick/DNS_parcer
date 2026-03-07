@@ -244,8 +244,23 @@ def merge_prices():
     ws = wb.active
     ws.title = "LG All Sellers"
     
+    # Format dates for headers
+    def get_header_date(timestamp, default_name):
+        if not timestamp:
+            return default_name
+        dt = datetime.datetime.fromtimestamp(timestamp)
+        return f"{default_name} {dt.strftime('%d.%m.%Y %H:%M')}"
+
     # Headers
-    headers = ["LG short name", "Название модели Ozon", "Название модели ДНС", "Название модели WB", "Цена Ozon", "Цена ДНС", "Цена WB"]
+    headers = [
+        "LG short name", 
+        "Название модели Ozon", 
+        "Название модели ДНС", 
+        "Название модели WB", 
+        get_header_date(ozon_time, "Цена Ozon"), 
+        get_header_date(dns_time, "Цена ДНС"), 
+        get_header_date(wb_time, "Цена WB")
+    ]
     
     # Styles
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
@@ -288,9 +303,9 @@ def merge_prices():
     ws.column_dimensions['B'].width = 40
     ws.column_dimensions['C'].width = 40
     ws.column_dimensions['D'].width = 40
-    ws.column_dimensions['E'].width = 15
-    ws.column_dimensions['F'].width = 15
-    ws.column_dimensions['G'].width = 15
+    ws.column_dimensions['E'].width = 25 # Increased for date header
+    ws.column_dimensions['F'].width = 25 # Increased for date header
+    ws.column_dimensions['G'].width = 25 # Increased for date header
     
     wb.save(output_path)
     print(f"Merged report saved to {output_path}")
